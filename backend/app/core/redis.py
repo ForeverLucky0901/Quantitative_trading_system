@@ -1,0 +1,52 @@
+import redis.asyncio as redis
+from typing import Optional
+from app.core.config import settings
+
+
+class RedisClient:
+    """Redis客户端封装"""
+    
+    def __init__(self):
+        self.redis: Optional[redis.Redis] = None
+    
+    async def connect(self):
+        """连接Redis"""
+        self.redis = await redis.from_url(
+            settings.REDIS_URL,
+            password=settings.REDIS_PASSWORD if settings.REDIS_PASSWORD else None,
+            encoding="utf-8",
+            decode_responses=True
+        )
+    
+    async def disconnect(self):
+        """断开连接"""
+        if self.redis:
+            await self.redis.close()
+    
+    async def get(self, key: str) -> Optional[str]:
+        """获取值"""
+        if not self.redis:
+            await self.connect()
+        return await self.redis.get(key)
+    
+    async def set(self, key: str, value: str, expire: int = None):
+        """设置值"""
+        if not self.redis:
+            await self.connect()
+        await self.redis.set(key, value, ex=expire)
+    
+    async def delete(self, key: str):
+        """删除键"""
+        if not self.redis:
+            await self.connect()
+        await self.redis.delete(key)
+    
+    async def exists(self, key: str) -> bool:
+        """检查键是否存在"""
+        if not self.redis:
+            await self.connect()
+        return await self.redis.exists(key) > 0
+
+
+# 全局Redis客户端实例
+redis_client = RedisClient()
