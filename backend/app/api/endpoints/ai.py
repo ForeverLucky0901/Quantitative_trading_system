@@ -270,53 +270,122 @@ def _calculate_simple_indicators(klines: List[Dict]) -> Dict[str, Any]:
 
 
 def _calculate_technical_indicators(df: pd.DataFrame) -> Dict[str, Any]:
-    """计算技术指标"""
+    """计算技术指标（精准版）"""
     indicators = {}
     
     try:
-        # 移动平均线
+        # 移动平均线（SMA & EMA）
         if len(df) >= 5:
-            indicators['ma_5'] = float(df['close'].tail(5).mean())
+            indicators['sma_5'] = float(df['close'].rolling(window=5).mean().iloc[-1])
+            indicators['ema_5'] = float(df['close'].ewm(span=5, adjust=False).mean().iloc[-1])
         if len(df) >= 10:
-            indicators['ma_10'] = float(df['close'].tail(10).mean())
+            indicators['sma_10'] = float(df['close'].rolling(window=10).mean().iloc[-1])
+            indicators['ema_10'] = float(df['close'].ewm(span=10, adjust=False).mean().iloc[-1])
         if len(df) >= 20:
-            indicators['ma_20'] = float(df['close'].tail(20).mean())
+            indicators['sma_20'] = float(df['close'].rolling(window=20).mean().iloc[-1])
+            indicators['ema_20'] = float(df['close'].ewm(span=20, adjust=False).mean().iloc[-1])
         if len(df) >= 50:
-            indicators['ma_50'] = float(df['close'].tail(50).mean())
+            indicators['sma_50'] = float(df['close'].rolling(window=50).mean().iloc[-1])
+            indicators['ema_50'] = float(df['close'].ewm(span=50, adjust=False).mean().iloc[-1])
         
-        # RSI
+        # RSI（相对强弱指标）
         if len(df) >= 14:
             delta = df['close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
+            gain = delta.where(delta > 0, 0)
+            loss = -delta.where(delta < 0, 0)
+            avg_gain = gain.rolling(window=14).mean()
+            avg_loss = loss.rolling(window=14).mean()
+            rs = avg_gain / avg_loss
             rsi = 100 - (100 / (1 + rs))
             indicators['rsi'] = float(rsi.iloc[-1])
+            indicators['rsi_signal'] = 'oversold' if rsi.iloc[-1] < 30 else 'overbought' if rsi.iloc[-1] > 70 else 'neutral'
         
-        # MACD
+        # MACD（指数平滑异同移动平均线）
         if len(df) >= 26:
             exp1 = df['close'].ewm(span=12, adjust=False).mean()
             exp2 = df['close'].ewm(span=26, adjust=False).mean()
             macd = exp1 - exp2
             signal = macd.ewm(span=9, adjust=False).mean()
+            histogram = macd - signal
             indicators['macd'] = float(macd.iloc[-1])
             indicators['macd_signal'] = float(signal.iloc[-1])
-            indicators['macd_histogram'] = float(macd.iloc[-1] - signal.iloc[-1])
+            indicators['macd_histogram'] = float(histogram.iloc[-1])
+            # MACD信号
+            if len(macd) >= 2:
+                if macd.iloc[-2] < signal.iloc[-2] and macd.iloc[-1] > signal.iloc[-1]:
+                    indicators['macd_cross'] = 'golden_cross'  # 金叉
+                elif macd.iloc[-2] > signal.iloc[-2] and macd.iloc[-1] < signal.iloc[-1]:
+                    indicators['macd_cross'] = 'death_cross'  # 死叉
+                else:
+                    indicators['macd_cross'] = 'none'
         
-        # 布林带
+        # 布林带（Bollinger Bands）
         if len(df) >= 20:
             sma = df['close'].rolling(window=20).mean()
             std = df['close'].rolling(window=20).std()
-            indicators['bb_upper'] = float(sma.iloc[-1] + (std.iloc[-1] * 2))
+            bb_upper = sma + (std * 2)
+            bb_lower = sma - (std * 2)
+            indicators['bb_upper'] = float(bb_upper.iloc[-1])
             indicators['bb_middle'] = float(sma.iloc[-1])
-            indicators['bb_lower'] = float(sma.iloc[-1] - (std.iloc[-1] * 2))
+            indicators['bb_lower'] = float(bb_lower.iloc[-1])
+            # 布林带位置
+            current_price = df['close'].iloc[-1]
+            bb_position = (current_price - bb_lower.iloc[-1]) / (bb_upper.iloc[-1] - bb_lower.iloc[-1])
+            indicators['bb_position'] = float(bb_position)  # 0-1之间，0.5为中轨
         
-        # 成交量
+        # ATR（平均真实波动幅度）
+        if len(df) >= 14:
+            high_low = df['high'] - df['low']
+            high_close = abs(df['high'] - df['close'].shift())
+            low_close = abs(df['low'] - df['close'].shift())
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            atr = tr.rolling(window=14).mean()
+            indicators['atr'] = float(atr.iloc[-1])
+            indicators['atr_percent'] = float((atr.iloc[-1] / df['close'].iloc[-1]) * 100)
+        
+        # 成交量分析
         if len(df) >= 20:
-            indicators['volume_avg'] = float(df['volume'].tail(20).mean())
-            indicators['volume_ratio'] = float(df['volume'].iloc[-1] / df['volume'].tail(20).mean())
+            vol_ma = df['volume'].rolling(window=20).mean()
+            indicators['volume_avg'] = float(vol_ma.iloc[-1])
+            indicators['volume_ratio'] = float(df['volume'].iloc[-1] / vol_ma.iloc[-1])
+            # 量价关系
+            price_change = (df['close'].iloc[-1] - df['close'].iloc[-2]) / df['close'].iloc[-2]
+            volume_change = (df['volume'].iloc[-1] - df['volume'].iloc[-2]) / df['volume'].iloc[-2]
+            indicators['price_volume_correlation'] = 'bullish' if price_change > 0 and volume_change > 0 else 'bearish' if price_change < 0 and volume_change > 0 else 'neutral'
+        
+        # KDJ指标
+        if len(df) >= 9:
+            low_9 = df['low'].rolling(window=9).min()
+            high_9 = df['high'].rolling(window=9).max()
+            rsv = (df['close'] - low_9) / (high_9 - low_9) * 100
+            k = rsv.ewm(com=2, adjust=False).mean()
+            d = k.ewm(com=2, adjust=False).mean()
+            j = 3 * k - 2 * d
+            indicators['kdj_k'] = float(k.iloc[-1])
+            indicators['kdj_d'] = float(d.iloc[-1])
+            indicators['kdj_j'] = float(j.iloc[-1])
+        
+        # 价格动量
+        if len(df) >= 5:
+            price_change_1d = ((df['close'].iloc[-1] - df['close'].iloc[-2]) / df['close'].iloc[-2]) * 100
+            price_change_5d = ((df['close'].iloc[-1] - df['close'].iloc[-5]) / df['close'].iloc[-5]) * 100
+            indicators['price_change_1d'] = float(price_change_1d)
+            indicators['price_change_5d'] = float(price_change_5d)
+        
+        # 趋势判断
+        if 'sma_5' in indicators and 'sma_20' in indicators and 'sma_50' in indicators:
+            if indicators['sma_5'] > indicators['sma_20'] > indicators['sma_50']:
+                indicators['trend'] = 'strong_uptrend'
+            elif indicators['sma_5'] > indicators['sma_20']:
+                indicators['trend'] = 'uptrend'
+            elif indicators['sma_5'] < indicators['sma_20'] < indicators['sma_50']:
+                indicators['trend'] = 'strong_downtrend'
+            elif indicators['sma_5'] < indicators['sma_20']:
+                indicators['trend'] = 'downtrend'
+            else:
+                indicators['trend'] = 'sideways'
         
     except Exception as e:
-        print(f"Error calculating indicators: {e}")
+        logger.error(f"Error calculating indicators: {e}")
     
     return indicators

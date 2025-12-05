@@ -9,6 +9,7 @@ import pandas as pd
 from loguru import logger
 from openai import AsyncOpenAI
 from app.core.config import settings
+from app.services.search_service import search_service
 
 
 class AIService:
@@ -46,6 +47,14 @@ class AIService:
             return {"error": "AI service not configured"}
         
         try:
+            # 获取实时新闻和市场情绪
+            if not news:
+                logger.info(f"Fetching real-time news for {symbol}")
+                news = await search_service.search_crypto_news(symbol)
+                sentiment = await search_service.get_market_sentiment(symbol)
+                if sentiment:
+                    news.append(f"恐惧贪婪指数: {sentiment.get('fear_greed_index')} ({sentiment.get('classification')})")
+            
             # 构建分析提示词
             prompt = self._build_market_analysis_prompt(symbol, market_data, news)
             
@@ -54,15 +63,29 @@ class AIService:
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是一位专业的量化交易分析师，擅长技术分析和市场趋势预测。"
+                        "content": """你是一位资深的量化交易分析师，拥有10年以上的实盘经验。
+
+你的专业能力：
+1. 精通技术分析：RSI、MACD、布林带、KDJ等所有主流指标
+2. 擅长量价分析：能够识别量价背离和量价配合
+3. 熟悉市场微观结构：支撑位、阻力位、趋势线
+4. 风险管理专家：始终把风险控制放在第一位
+5. 数据驱动决策：基于实时数据和统计规律，不主观猜测
+
+分析原则：
+- 基于提供的实时数据进行分析
+- 给出明确的数据支撑
+- 提供具体的价位和信号
+- 包含风险提示和止损建议
+- 避免模棱两可的表述，给出明确结论"""
                     },
                     {
                         "role": "user",
                         "content": prompt
                     }
                 ],
-                temperature=0.7,
-                max_tokens=1500
+                temperature=0.3,  # 降低随机性，提高精准度
+                max_tokens=2000
             )
             
             analysis = response.choices[0].message.content
@@ -334,13 +357,18 @@ class AIService:
         news: Optional[List[str]]
     ) -> str:
         """构建市场分析提示词"""
+        from datetime import datetime
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
         prompt = f"""
-请分析以下市场数据：
+【重要】以下是实时市场数据（采集时间: {current_time}），请基于这些最新数据进行分析：
 
 交易对/股票: {symbol}
 当前价格: {market_data.get('price', 'N/A')}
 24小时成交量: {market_data.get('volume', 'N/A')}
 24小时涨跌幅: {market_data.get('change_percent', 'N/A')}
+最高价: {market_data.get('high_24h', 'N/A')}
+最低价: {market_data.get('low_24h', 'N/A')}
 """
         
         if 'technical_indicators' in market_data:
