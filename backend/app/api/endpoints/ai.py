@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.database import get_db
 from app.services.ai_service import ai_service
+from app.services.ai_predictor import ai_predictor
 from app.services.data_collector import data_collector
 import pandas as pd
 
@@ -207,6 +208,136 @@ async def optimize_strategy(request: StrategyOptimizationRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/predict-price")
+async def predict_price_movement(request: TradingSignalRequest):
+    """
+    AI价格预测
+    
+    使用AI分析历史数据，预测未来价格走势
+    """
+    try:
+        # 获取历史数据
+        klines = await data_collector.fetch_ohlcv(
+            exchange_name=request.exchange,
+            symbol=request.symbol,
+            timeframe=request.timeframe,
+            limit=request.limit
+        )
+        
+        if not klines:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        df = pd.DataFrame(klines)
+        indicators = _calculate_technical_indicators(df)
+        
+        # AI预测
+        prediction = await ai_predictor.predict_price_movement(
+            symbol=request.symbol,
+            historical_data=df,
+            indicators=indicators
+        )
+        
+        return {
+            "status": "success",
+            "data": prediction
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/analyze-algorithm")
+async def analyze_algorithm_performance(
+    algorithm_name: str = Body(...),
+    backtest_results: List[Dict[str, Any]] = Body(...),
+    market_conditions: Dict[str, Any] = Body(default={})
+):
+    """
+    AI算法性能分析
+    
+    分析算法表现，提出优化建议以提高准确率
+    """
+    try:
+        analysis = await ai_predictor.analyze_algorithm_performance(
+            algorithm_name=algorithm_name,
+            backtest_results=backtest_results,
+            market_conditions=market_conditions
+        )
+        
+        return {
+            "status": "success",
+            "data": analysis
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/optimize-parameters")
+async def optimize_algorithm_parameters(
+    strategy_code: str = Body(...),
+    parameter_ranges: Dict[str, List[float]] = Body(...),
+    optimization_target: str = Body("sharpe_ratio")
+):
+    """
+    AI参数优化
+    
+    使用AI分析并推荐最优参数组合
+    """
+    try:
+        # 转换参数范围格式
+        param_ranges = {k: tuple(v) for k, v in parameter_ranges.items()}
+        
+        recommendations = await ai_predictor.optimize_parameters(
+            strategy_code=strategy_code,
+            parameter_ranges=param_ranges,
+            optimization_target=optimization_target
+        )
+        
+        return {
+            "status": "success",
+            "data": recommendations
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/detect-market-regime")
+async def detect_market_regime(request: TradingSignalRequest):
+    """
+    AI市场状态识别
+    
+    识别当前市场是趋势市还是震荡市，选择适合的策略
+    """
+    try:
+        klines = await data_collector.fetch_ohlcv(
+            exchange_name=request.exchange,
+            symbol=request.symbol,
+            timeframe=request.timeframe,
+            limit=request.limit
+        )
+        
+        if not klines:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        df = pd.DataFrame(klines)
+        indicators = _calculate_technical_indicators(df)
+        
+        regime = await ai_predictor.detect_market_regime(
+            historical_data=df,
+            indicators=indicators
+        )
+        
+        return {
+            "status": "success",
+            "data": regime
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/capabilities")
 async def get_ai_capabilities():
     """
@@ -244,6 +375,30 @@ async def get_ai_capabilities():
                 "name": "策略优化",
                 "endpoint": "/api/v1/ai/optimize-strategy",
                 "description": "提供策略参数优化建议",
+                "status": "available"
+            },
+            {
+                "name": "AI价格预测",
+                "endpoint": "/api/v1/ai/predict-price",
+                "description": "预测未来价格走势和目标价位",
+                "status": "available"
+            },
+            {
+                "name": "AI算法分析",
+                "endpoint": "/api/v1/ai/analyze-algorithm",
+                "description": "分析算法性能并提高准确率",
+                "status": "available"
+            },
+            {
+                "name": "AI参数优化",
+                "endpoint": "/api/v1/ai/optimize-parameters",
+                "description": "智能推荐最优参数组合",
+                "status": "available"
+            },
+            {
+                "name": "市场状态识别",
+                "endpoint": "/api/v1/ai/detect-market-regime",
+                "description": "识别趋势市/震荡市，选择适合策略",
                 "status": "available"
             }
         ],
