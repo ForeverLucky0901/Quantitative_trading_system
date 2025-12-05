@@ -1,0 +1,322 @@
+"""
+AI功能API接口
+支持市场分析、策略生成、交易信号、智能问答等
+"""
+from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from sqlalchemy.ext.asyncio import AsyncSession
+from typing import List, Dict, Any, Optional
+from datetime import datetime, timedelta
+from pydantic import BaseModel, Field
+
+from app.core.database import get_db
+from app.services.ai_service import ai_service
+from app.services.data_collector import data_collector
+import pandas as pd
+
+router = APIRouter()
+
+
+class MarketAnalysisRequest(BaseModel):
+    """市场分析请求"""
+    symbol: str = Field(..., description="交易对/股票代码")
+    exchange: str = Field("binance_public", description="交易所")
+    include_news: bool = Field(False, description="是否包含新闻分析")
+    news_items: Optional[List[str]] = Field(None, description="新闻列表")
+
+
+class StrategyGenerationRequest(BaseModel):
+    """策略生成请求"""
+    description: str = Field(..., description="策略描述")
+    strategy_type: str = Field("technical", description="策略类型")
+    params: Optional[Dict[str, Any]] = Field(None, description="额外参数")
+
+
+class TradingSignalRequest(BaseModel):
+    """交易信号请求"""
+    symbol: str = Field(..., description="交易对")
+    exchange: str = Field("binance_public", description="交易所")
+    timeframe: str = Field("1h", description="时间周期")
+    limit: int = Field(100, description="K线数量")
+
+
+class QuestionRequest(BaseModel):
+    """问答请求"""
+    question: str = Field(..., description="用户问题")
+    context: Optional[Dict[str, Any]] = Field(None, description="上下文信息")
+
+
+class StrategyOptimizationRequest(BaseModel):
+    """策略优化请求"""
+    strategy_code: str = Field(..., description="策略代码")
+    backtest_results: List[Dict[str, Any]] = Field(..., description="回测结果")
+
+
+@router.post("/analyze-market")
+async def analyze_market(
+    request: MarketAnalysisRequest,
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    AI市场分析
+    
+    分析指定交易对的市场趋势、技术面、支撑阻力位等
+    """
+    try:
+        # 获取市场数据
+        ticker = await data_collector.fetch_ticker(request.exchange, request.symbol)
+        
+        # 获取K线数据用于技术分析
+        klines = await data_collector.fetch_ohlcv(
+            exchange_name=request.exchange,
+            symbol=request.symbol,
+            timeframe="1h",
+            limit=100
+        )
+        
+        # 构建市场数据
+        market_data = {
+            "price": ticker.get("last"),
+            "volume": ticker.get("volume"),
+            "change_percent": ticker.get("percentage"),
+            "high_24h": ticker.get("high"),
+            "low_24h": ticker.get("low"),
+            "technical_indicators": _calculate_simple_indicators(klines) if klines else {}
+        }
+        
+        # 调用AI分析
+        analysis = await ai_service.analyze_market(
+            symbol=request.symbol,
+            market_data=market_data,
+            news=request.news_items if request.include_news else None
+        )
+        
+        return {
+            "status": "success",
+            "data": analysis
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/generate-strategy")
+async def generate_strategy(request: StrategyGenerationRequest):
+    """
+    AI策略生成
+    
+    根据用户描述自动生成量化交易策略代码
+    """
+    try:
+        result = await ai_service.generate_strategy(
+            description=request.description,
+            strategy_type=request.strategy_type,
+            params=request.params
+        )
+        
+        return {
+            "status": "success",
+            "data": result
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/trading-signal")
+async def generate_trading_signal(request: TradingSignalRequest):
+    """
+    AI交易信号生成
+    
+    基于市场数据和技术指标生成交易信号和建议
+    """
+    try:
+        # 获取K线数据
+        klines = await data_collector.fetch_ohlcv(
+            exchange_name=request.exchange,
+            symbol=request.symbol,
+            timeframe=request.timeframe,
+            limit=request.limit
+        )
+        
+        if not klines:
+            raise HTTPException(status_code=404, detail="No market data available")
+        
+        # 转换为DataFrame
+        df = pd.DataFrame(klines)
+        
+        # 计算技术指标
+        indicators = _calculate_technical_indicators(df)
+        
+        # 生成交易信号
+        signal = await ai_service.generate_trading_signal(
+            symbol=request.symbol,
+            market_data=df,
+            indicators=indicators
+        )
+        
+        return {
+            "status": "success",
+            "data": signal
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/ask")
+async def ask_question(request: QuestionRequest):
+    """
+    AI智能问答
+    
+    回答量化交易相关问题
+    """
+    try:
+        answer = await ai_service.answer_question(
+            question=request.question,
+            context=request.context
+        )
+        
+        return {
+            "status": "success",
+            "data": answer
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/optimize-strategy")
+async def optimize_strategy(request: StrategyOptimizationRequest):
+    """
+    AI策略优化建议
+    
+    基于回测结果提供参数优化建议
+    """
+    try:
+        suggestions = await ai_service.optimize_strategy_params(
+            strategy_code=request.strategy_code,
+            backtest_results=request.backtest_results
+        )
+        
+        return {
+            "status": "success",
+            "data": suggestions
+        }
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/capabilities")
+async def get_ai_capabilities():
+    """
+    获取AI功能列表
+    
+    返回系统支持的所有AI功能
+    """
+    return {
+        "capabilities": [
+            {
+                "name": "市场分析",
+                "endpoint": "/api/v1/ai/analyze-market",
+                "description": "分析市场趋势、技术面、支撑阻力位",
+                "status": "available"
+            },
+            {
+                "name": "策略生成",
+                "endpoint": "/api/v1/ai/generate-strategy",
+                "description": "根据描述自动生成交易策略代码",
+                "status": "available"
+            },
+            {
+                "name": "交易信号",
+                "endpoint": "/api/v1/ai/trading-signal",
+                "description": "生成买卖信号和交易建议",
+                "status": "available"
+            },
+            {
+                "name": "智能问答",
+                "endpoint": "/api/v1/ai/ask",
+                "description": "回答量化交易相关问题",
+                "status": "available"
+            },
+            {
+                "name": "策略优化",
+                "endpoint": "/api/v1/ai/optimize-strategy",
+                "description": "提供策略参数优化建议",
+                "status": "available"
+            }
+        ],
+        "model": "OpenAI GPT",
+        "status": "operational" if ai_service.client else "not_configured"
+    }
+
+
+def _calculate_simple_indicators(klines: List[Dict]) -> Dict[str, Any]:
+    """计算简单技术指标"""
+    if not klines or len(klines) < 20:
+        return {}
+    
+    df = pd.DataFrame(klines)
+    
+    return {
+        "ma_5": float(df['close'].tail(5).mean()),
+        "ma_10": float(df['close'].tail(10).mean()),
+        "ma_20": float(df['close'].tail(20).mean()),
+        "volume_avg": float(df['volume'].tail(20).mean()),
+        "price_change_5": float((df['close'].iloc[-1] / df['close'].iloc[-5] - 1) * 100),
+        "price_change_20": float((df['close'].iloc[-1] / df['close'].iloc[-20] - 1) * 100)
+    }
+
+
+def _calculate_technical_indicators(df: pd.DataFrame) -> Dict[str, Any]:
+    """计算技术指标"""
+    indicators = {}
+    
+    try:
+        # 移动平均线
+        if len(df) >= 5:
+            indicators['ma_5'] = float(df['close'].tail(5).mean())
+        if len(df) >= 10:
+            indicators['ma_10'] = float(df['close'].tail(10).mean())
+        if len(df) >= 20:
+            indicators['ma_20'] = float(df['close'].tail(20).mean())
+        if len(df) >= 50:
+            indicators['ma_50'] = float(df['close'].tail(50).mean())
+        
+        # RSI
+        if len(df) >= 14:
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            indicators['rsi'] = float(rsi.iloc[-1])
+        
+        # MACD
+        if len(df) >= 26:
+            exp1 = df['close'].ewm(span=12, adjust=False).mean()
+            exp2 = df['close'].ewm(span=26, adjust=False).mean()
+            macd = exp1 - exp2
+            signal = macd.ewm(span=9, adjust=False).mean()
+            indicators['macd'] = float(macd.iloc[-1])
+            indicators['macd_signal'] = float(signal.iloc[-1])
+            indicators['macd_histogram'] = float(macd.iloc[-1] - signal.iloc[-1])
+        
+        # 布林带
+        if len(df) >= 20:
+            sma = df['close'].rolling(window=20).mean()
+            std = df['close'].rolling(window=20).std()
+            indicators['bb_upper'] = float(sma.iloc[-1] + (std.iloc[-1] * 2))
+            indicators['bb_middle'] = float(sma.iloc[-1])
+            indicators['bb_lower'] = float(sma.iloc[-1] - (std.iloc[-1] * 2))
+        
+        # 成交量
+        if len(df) >= 20:
+            indicators['volume_avg'] = float(df['volume'].tail(20).mean())
+            indicators['volume_ratio'] = float(df['volume'].iloc[-1] / df['volume'].tail(20).mean())
+        
+    except Exception as e:
+        print(f"Error calculating indicators: {e}")
+    
+    return indicators

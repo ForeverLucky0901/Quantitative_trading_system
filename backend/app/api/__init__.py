@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.endpoints import auth, users, strategies, trades, market, data, markets
+from app.api.endpoints import auth, users, strategies, trades, market, data, markets, ai
 
 api_router = APIRouter()
 
@@ -11,3 +11,4 @@ api_router.include_router(trades.router, prefix="/trades", tags=["交易"])
 api_router.include_router(market.router, prefix="/market", tags=["行情"])
 api_router.include_router(data.router, prefix="/data", tags=["数据采集"])
 api_router.include_router(markets.router, prefix="/markets", tags=["多市场数据"])
+api_router.include_router(ai.router, prefix="/ai", tags=["AI功能"])

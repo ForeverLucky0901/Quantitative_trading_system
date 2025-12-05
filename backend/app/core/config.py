@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # CORS配置
     CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:5173"]
     
+    # AI配置
+    OPENAI_API_KEY: str = ""
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_MODEL: str = "gpt-3.5-turbo"
+    
     class Config:
         env_file = ".env"
         case_sensitive = True
